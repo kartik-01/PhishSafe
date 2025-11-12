@@ -60,7 +60,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isAuthenticated) {
         console.log('[AuthContext] User is authenticated, fetching token...');
         try {
-          const token = await getAccessTokenSilently();
+            const token = await getAccessTokenSilently({
+            authorizationParams: {
+            audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+            },
+        });
+        console.log(token);
           if (!mounted) return;
           console.log('[AuthContext] Token retrieved successfully:', token?.substring(0, 20) + '...');
           try {
