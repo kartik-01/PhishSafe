@@ -38,6 +38,25 @@ export interface Analysis {
   updatedAt: string;
 }
 
+// Encrypted version of Analysis (as stored in backend)
+export interface EncryptedAnalysis {
+  id: string;
+  userSub: string;
+  userEmail: string; // Encrypted JSON string
+  inputType: 'url' | 'header' | 'eml';
+  inputContent: string; // Encrypted JSON string
+  analysisContext?: string | null; // Encrypted JSON string
+  mlResult: string; // Encrypted JSON string
+  createdAt: string;
+  updatedAt: string;
+}
+
+// User salt for key derivation
+export interface UserSalt {
+  userSub: string;
+  salt: string; // Base64 encoded salt
+}
+
 export interface SubmitHeaderRequest {
   header_text: string;
 }
@@ -54,5 +73,3 @@ export interface AnalysisResultUI {
   indicators: string[];
   details: Record<string, any>;
 }
-
-

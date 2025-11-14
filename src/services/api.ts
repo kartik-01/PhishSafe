@@ -2,6 +2,7 @@ import type {
   MLPredictRequest,
   MLPredictResponse,
   Analysis,
+  EncryptedAnalysis,
 } from '@/types/api';
 
 const ML_API_URL = import.meta.env.VITE_ML_API_URL;
@@ -66,11 +67,11 @@ export const mlService = {
 export const backendService = {
   saveResults: async (
     inputType: 'url' | 'header' | 'eml',
-    inputContent: string,
-    mlResult: MLPredictResponse,
-    userEmail: string,
+    inputContent: string, // Encrypted JSON string
+    mlResult: string, // Encrypted JSON string
+    userEmail: string, // Encrypted JSON string
     token: string
-  ): Promise<Analysis> => {
+  ): Promise<EncryptedAnalysis> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
@@ -90,16 +91,13 @@ export const backendService = {
           inputType,
           inputContent,
           userEmail,
-          mlResult: {
-            is_phishing: mlResult.is_phishing,
-            phishing_probability: mlResult.phishing_probability,
-          },
+          mlResult,
         }),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
-      return handleResponse<Analysis>(response);
+      return handleResponse<EncryptedAnalysis>(response);
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
@@ -112,7 +110,7 @@ export const backendService = {
     }
   },
 
-  getAnalyses: async (token?: string): Promise<{ items: Analysis[]; nextCursor: string | null }> => {
+  getAnalyses: async (token?: string): Promise<{ items: EncryptedAnalysis[]; nextCursor: string | null }> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
@@ -127,7 +125,7 @@ export const backendService = {
       });
 
       clearTimeout(timeoutId);
-      return handleResponse<{ items: Analysis[]; nextCursor: string | null }>(response);
+      return handleResponse<{ items: EncryptedAnalysis[]; nextCursor: string | null }>(response);
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {

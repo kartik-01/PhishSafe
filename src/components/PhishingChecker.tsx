@@ -18,6 +18,7 @@ import {
 import LetterGlitch from './animations/LetterGlitch';
 import { motion } from 'motion/react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useEncryption } from '@/contexts/EncryptionContext';
 import { mlService, backendService } from '@/services/api';
 import { toast } from 'sonner';
 import type { AnalysisResultUI } from '@/types/api';
@@ -29,6 +30,7 @@ interface PhishingCheckerProps {
 
 export function PhishingChecker({ onBack }: PhishingCheckerProps) {
   const { isAuthenticated, getAccessTokenSilently, user, logout } = useAuth();
+  const { encryptData, isUnlocked } = useEncryption();
   const [url, setUrl] = useState('');
   const [emailContent, setEmailContent] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -78,11 +80,20 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
 
       setResult(uiResult);
 
-      // Auto-save to backend if authenticated
-      if (isAuthenticated && user?.email) {
+      // Auto-save to backend if authenticated and encryption unlocked
+      if (isAuthenticated && user?.email && isUnlocked) {
         try {
           const token = await getAccessTokenSilently();
-          await backendService.saveResults('url', url, mlResult, user.email, token);
+          // Encrypt data before sending
+          const encryptedData = await encryptData({
+            userEmail: user.email,
+            inputContent: url,
+            mlResult: {
+              is_phishing: mlResult.is_phishing,
+              phishing_probability: mlResult.phishing_probability,
+            },
+          });
+          await backendService.saveResults('url', encryptedData.inputContent!, encryptedData.mlResult!, encryptedData.userEmail!, token);
           // Silently save - no toast notification for auto-save
         } catch (error: any) {
           console.error('Failed to auto-save to backend:', error);
@@ -132,11 +143,20 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
 
       setResult(uiResult);
 
-      // Auto-save to backend if authenticated
-      if (isAuthenticated && user?.email) {
+      // Auto-save to backend if authenticated and encryption unlocked
+      if (isAuthenticated && user?.email && isUnlocked) {
         try {
           const token = await getAccessTokenSilently();
-          await backendService.saveResults('eml', content, mlResult, user.email, token);
+          // Encrypt data before sending
+          const encryptedData = await encryptData({
+            userEmail: user.email,
+            inputContent: content,
+            mlResult: {
+              is_phishing: mlResult.is_phishing,
+              phishing_probability: mlResult.phishing_probability,
+            },
+          });
+          await backendService.saveResults('eml', encryptedData.inputContent!, encryptedData.mlResult!, encryptedData.userEmail!, token);
           // Silently save - no toast notification for auto-save
         } catch (error: any) {
           console.error('Failed to auto-save to backend:', error);

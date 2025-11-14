@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Auth0Provider } from '@auth0/auth0-react';
 import { AuthProvider } from './contexts/AuthContext';
+import { EncryptionProvider } from './contexts/EncryptionContext';
 import App from './App';
 import './index.css';
 
@@ -32,8 +33,9 @@ createRoot(document.getElementById('root')!).render(
       }}
     >
       <AuthProvider>
-        <App />
-        
+        <EncryptionProvider>
+          <App />
+        </EncryptionProvider>
       </AuthProvider>
     </Auth0Provider>
   </StrictMode>

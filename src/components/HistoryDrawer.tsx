@@ -4,9 +4,10 @@ import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { AlertTriangle, CheckCircle, Clock, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useEncryption } from '@/contexts/EncryptionContext';
 import { backendService } from '@/services/api';
 import { toast } from 'sonner';
-import type { Analysis } from '@/types/api';
+import type { Analysis, EncryptedAnalysis } from '@/types/api';
 
 interface HistoryDrawerProps {
   open: boolean;
@@ -15,6 +16,7 @@ interface HistoryDrawerProps {
 
 export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
   const { getAccessTokenSilently } = useAuth();
+  const { decryptData, isUnlocked } = useEncryption();
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -27,9 +29,40 @@ export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
   const loadHistory = async () => {
     setLoading(true);
     try {
+      if (!isUnlocked) {
+        toast.error('Encryption not unlocked. Please unlock encryption to view history.');
+        return;
+      }
+
       const token = await getAccessTokenSilently();
       const response = await backendService.getAnalyses(token);
-      setAnalyses(response.items);
+      
+      // Decrypt each analysis
+      const decryptedAnalyses = await Promise.all(
+        response.items.map(async (encrypted: EncryptedAnalysis) => {
+          try {
+            return await decryptData(encrypted);
+          } catch (error) {
+            console.error('Failed to decrypt analysis:', error);
+            // Return a placeholder if decryption fails
+            return {
+              id: encrypted.id,
+              userSub: encrypted.userSub,
+              userEmail: '[Encrypted]',
+              inputType: encrypted.inputType,
+              inputContent: '[Decryption failed]',
+              mlResult: {
+                is_phishing: false,
+                phishing_probability: 0,
+              },
+              createdAt: encrypted.createdAt,
+              updatedAt: encrypted.updatedAt,
+            } as Analysis;
+          }
+        })
+      );
+      
+      setAnalyses(decryptedAnalyses);
     } catch (error: any) {
       toast.error(error.message || 'Failed to load history');
     } finally {
