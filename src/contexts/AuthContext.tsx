@@ -66,36 +66,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // This allows other parts of the app (or non-React scripts) to read the token if needed.
   useEffect(() => {
     let mounted = true;
-    const storeToken = async () => {
-      console.log('[AuthContext] Auth state changed - isAuthenticated:', isAuthenticated, 'isLoading:', isLoading);
-      
-      if (isAuthenticated) {
-          try {
-            const token = await getAccessTokenSilently();
-          if (!mounted) return;
-          console.log('[AuthContext] Token retrieved successfully:', token?.substring(0, 20) + '...');
-          try {
-            sessionStorage.setItem('phishsafe_token', token);
-            console.log('[AuthContext] Token stored in sessionStorage');
-            console.log('authparams',window.location.origin)
-            // Also log what's in storage to verify
-            const stored = sessionStorage.getItem('phishsafe_token');
-            console.log('[AuthContext] Verified token in sessionStorage:', stored?.substring(0, 20) + '...');
-          } catch (e) {
-            console.error('[AuthContext] Failed to store token in sessionStorage:', e);
-          }
-        } catch (e) {
-          console.error('[AuthContext] Failed to get token:', e);
-          // token retrieval failed; ensure no stale token remains
-          try { sessionStorage.removeItem('phishsafe_token'); } catch (err) {}
-        }
-      } else {
-        console.log('[AuthContext] User is not authenticated, clearing token');
-        try { sessionStorage.removeItem('phishsafe_token'); } catch (err) {}
-      }
-    };
-
-    storeToken();
     return () => { mounted = false };
   }, [isAuthenticated, getAccessTokenSilently]);
 

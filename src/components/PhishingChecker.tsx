@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Shield, Link as LinkIcon, Mail, ArrowLeft, AlertTriangle, CheckCircle, XCircle, History, User, LogOut } from 'lucide-react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { Shield, Link as LinkIcon, Mail, ArrowLeft, AlertTriangle, CheckCircle, XCircle, History, User, LogOut, X, Info } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Card } from './ui/card';
@@ -30,13 +30,54 @@ interface PhishingCheckerProps {
 
 export function PhishingChecker({ onBack }: PhishingCheckerProps) {
   const { isAuthenticated, getAccessTokenSilently, user, logout } = useAuth();
-  const { encryptData, isUnlocked } = useEncryption();
+  const { encryptData, isUnlocked, isSetup } = useEncryption();
   const [url, setUrl] = useState('');
   const [emailContent, setEmailContent] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResultUI | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showReloadNotice, setShowReloadNotice] = useState(false);
+
+  // Blur file input and other focusable elements when encryption unlock dialog is about to open
+  // This prevents aria-hidden warning when dialog applies aria-hidden to background
+  useLayoutEffect(() => {
+    if (isSetup && !isUnlocked) {
+      // Blur file input specifically (common culprit)
+      fileInputRef.current?.blur();
+      
+      // Blur any other focused elements in this component
+      const activeElement = document.activeElement as HTMLElement | null;
+      if (activeElement && activeElement !== document.body) {
+        // Check if active element is inside this component but not in a dialog
+        const isInDialog = activeElement.closest('[role="dialog"]');
+        const isInThisComponent = activeElement.closest('[data-phishing-checker]');
+        if (!isInDialog && isInThisComponent) {
+          activeElement.blur();
+        }
+      }
+    }
+  }, [isSetup, isUnlocked]);
+
+  // Show reload notice when encryption is unlocked (if not dismissed)
+  useEffect(() => {
+    if (isUnlocked) {
+      // Check if notice was dismissed in this session
+      const dismissed = sessionStorage.getItem('reload_notice_dismissed');
+      if (!dismissed) {
+        setShowReloadNotice(true);
+      }
+    } else {
+      setShowReloadNotice(false);
+    }
+  }, [isUnlocked]);
+
+  const handleDismissNotice = () => {
+    setShowReloadNotice(false);
+    sessionStorage.setItem('reload_notice_dismissed', 'true');
+  };
 
   // Convert API response to UI format
   const mapToUIResult = (apiResult: any): AnalysisResultUI => {
@@ -180,6 +221,14 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
     }
   };
 
+  // Prevent file input from retaining focus when encryption dialog is open
+  const handleFileInputFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (isSetup && !isUnlocked) {
+      // If encryption unlock dialog is open, blur immediately
+      e.target.blur();
+    }
+  };
+
   const getThreatColor = (level: string) => {
     switch (level) {
       case 'critical': return 'text-red-500';
@@ -223,7 +272,7 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
   };
 
   return (
-    <div className="min-h-screen bg-black text-emerald-400">
+    <div className="min-h-screen bg-black text-emerald-400" data-phishing-checker>
       
       {/* Header */}
       <div className="border-b border-emerald-500/30 bg-slate-900/80 backdrop-blur relative z-10">
@@ -253,7 +302,11 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
               {isAuthenticated && (
                 <>
                   <Button
-                    onClick={() => setShowHistory(true)}
+                    ref={historyButtonRef}
+                    onClick={() => {
+                      (document.activeElement as HTMLElement | null)?.blur?.();
+                      setShowHistory(true);
+                    }}
                     variant="outline"
                     className="border-emerald-500 text-emerald-400 hover:bg-emerald-500/10 hidden sm:flex"
                   >
@@ -261,7 +314,10 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
                     History
                   </Button>
                   <Button
-                    onClick={() => setShowHistory(true)}
+                    onClick={() => {
+                      (document.activeElement as HTMLElement | null)?.blur?.();
+                      setShowHistory(true);
+                    }}
                     variant="outline"
                     className="border-emerald-500 text-emerald-400 hover:bg-emerald-500/10 p-2 sm:hidden"
                   >
@@ -307,6 +363,27 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
           </div>
         </div>
       </div>
+
+      {/* Reload Notice */}
+      {showReloadNotice && (
+        <div className="w-full flex justify-center pt-4 pb-2 px-4">
+          <div className="max-w-2xl w-full bg-slate-900/90 border border-emerald-500/30 rounded-lg p-3 sm:p-4 flex items-center gap-3 shadow-lg shadow-emerald-500/10">
+            <Info className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+            <p className="text-sm sm:text-base text-slate-200 flex-1 font-mono">
+              <span className="text-emerald-400">Note:</span> If you reload the page, you'll need to enter your passphrase again for security.
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDismissNotice}
+              className="text-slate-400 hover:text-slate-50 hover:bg-slate-800/50 p-1 sm:p-2 h-auto flex-shrink-0"
+              aria-label="Dismiss notice"
+            >
+              <X className="w-4 h-4 sm:w-5 sm:h-5" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="container mx-auto px-4 py-4 sm:py-8">
         <Tabs defaultValue="url" className="max-w-4xl mx-auto">
@@ -354,9 +431,11 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
                   </label>
                   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                     <Input
+                      ref={fileInputRef}
                       type="file"
                       accept=".eml"
                       onChange={handleFileChange}
+                      onFocus={handleFileInputFocus}
                       className="bg-slate-900/50 border-emerald-500/30 text-slate-100 font-mono text-sm"
                     />
                     {selectedFile && (
@@ -470,7 +549,7 @@ export function PhishingChecker({ onBack }: PhishingCheckerProps) {
       </div>
 
       {isAuthenticated && (
-        <HistoryDrawer open={showHistory} onOpenChange={setShowHistory} />
+        <HistoryDrawer open={showHistory} onOpenChange={setShowHistory} triggerRef={historyButtonRef} />
       )}
     </div>
   );

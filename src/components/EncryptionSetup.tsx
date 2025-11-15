@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useLayoutEffect, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -18,6 +18,7 @@ export function EncryptionSetup({ open, onComplete }: EncryptionSetupProps) {
   const [showPassphrase, setShowPassphrase] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const passphraseInputRef = useRef<HTMLInputElement>(null);
 
   const validatePassphrase = (phrase: string): string[] => {
     const errs: string[] = [];
@@ -93,9 +94,63 @@ export function EncryptionSetup({ open, onComplete }: EncryptionSetupProps) {
     return 'Very Strong';
   };
 
+  // Use layout effect to synchronously manage focus/blur to avoid aria-hidden race
+  // This runs BEFORE the dialog applies aria-hidden to background elements
+  useLayoutEffect(() => {
+    if (!open) {
+      // When closing, blur the input to avoid leaving focus on hidden content
+      passphraseInputRef.current?.blur();
+      return;
+    }
+
+    // When opening, blur ALL focusable elements in the background FIRST
+    // This prevents the aria-hidden warning when Radix applies aria-hidden
+    // We do this synchronously before React renders the dialog
+    const activeElement = document.activeElement as HTMLElement | null;
+    
+    // Blur the currently active element if it's not in a dialog
+    if (activeElement && activeElement !== document.body) {
+      const isInDialog = activeElement.closest('[role="dialog"]');
+      if (!isInDialog) {
+        activeElement.blur();
+      }
+    }
+
+    // Safety check: blur any focusable elements that might still have focus
+    // This handles edge cases where focus might be on a descendant element
+    const focusableElements = document.querySelectorAll<HTMLElement>(
+      'input:not([type="hidden"]), textarea, select, button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    focusableElements.forEach((el) => {
+      const isInDialog = el.closest('[role="dialog"]');
+      // Only blur if this element currently has focus and is not in a dialog
+      if (!isInDialog && document.activeElement === el) {
+        el.blur();
+      }
+    });
+  }, [open]);
+
+  // Handle focus when dialog opens - use Radix's onOpenAutoFocus for proper timing
+  // We prevent default to control when focus happens (after aria-hidden is removed)
+  const handleOpenAutoFocus = (e: Event) => {
+    // Prevent default focus behavior
+    e.preventDefault();
+    
+    // Wait for dialog animation to complete (200ms) plus buffer
+    // This ensures aria-hidden is removed before we focus
+    setTimeout(() => {
+      if (passphraseInputRef.current && open) {
+        passphraseInputRef.current.focus();
+      }
+    }, 250);
+  };
+
   return (
     <Dialog open={open} onOpenChange={() => {}}>
-      <DialogContent className="bg-slate-900 border-2 border-emerald-500 text-emerald-400 sm:max-w-md">
+      <DialogContent 
+        className="bg-slate-900 border-2 border-emerald-500 text-emerald-400 sm:max-w-md"
+        onOpenAutoFocus={handleOpenAutoFocus}
+      >
         <DialogHeader>
           <DialogTitle className="text-2xl text-slate-50 font-mono flex items-center gap-2">
             <Lock className="w-6 h-6 text-emerald-400" />
@@ -113,6 +168,7 @@ export function EncryptionSetup({ open, onComplete }: EncryptionSetupProps) {
             </label>
             <div className="relative">
               <Input
+                ref={passphraseInputRef}
                 type={showPassphrase ? 'text' : 'password'}
                 value={passphrase}
                 onChange={(e) => {

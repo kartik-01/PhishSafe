@@ -1,7 +1,8 @@
 // Web Crypto API utilities for end-to-end encryption
 // Uses PBKDF2 for key derivation and AES-GCM for encryption
 
-const PBKDF2_ITERATIONS = 100000;
+// NIST 2024 recommendation: 600,000 iterations minimum to resist GPU brute-force attacks
+const PBKDF2_ITERATIONS = 600000;
 const KEY_LENGTH = 256;
 const IV_LENGTH = 12; // 96 bits for GCM
 
@@ -25,7 +26,7 @@ export async function deriveKey(
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: salt,
+      salt: salt as BufferSource,
       iterations: iterations,
       hash: 'SHA-256',
     },
@@ -41,9 +42,10 @@ export async function deriveKey(
 
 /**
  * Generate a random salt
+ * Uses 32 bytes (256 bits) for strong brute-force resistance
  */
 export function generateSalt(): Uint8Array {
-  return crypto.getRandomValues(new Uint8Array(16));
+  return crypto.getRandomValues(new Uint8Array(32));
 }
 
 /**
@@ -60,7 +62,7 @@ export async function encrypt(
   const encrypted = await crypto.subtle.encrypt(
     {
       name: 'AES-GCM',
-      iv: iv,
+      iv: iv as BufferSource,
     },
     key,
     data
@@ -68,7 +70,7 @@ export async function encrypt(
 
   return {
     ciphertext: arrayBufferToBase64(encrypted),
-    iv: arrayBufferToBase64(iv),
+    iv: arrayBufferToBase64(iv.buffer),
   };
 }
 

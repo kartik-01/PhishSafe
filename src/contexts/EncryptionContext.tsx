@@ -12,13 +12,24 @@ import {
   storeEncryptedKey,
   getEncryptedKey,
   hasEncryptedKey,
+  clearEncryptedKey,
 } from '@/utils/indexedDB';
 import type { Analysis, EncryptedAnalysis } from '@/types/api';
+
+// Rate limiting configuration to prevent brute-force attacks
+const MAX_UNLOCK_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+interface RateLimitState {
+  attempts: number;
+  lockedUntil: number | null;
+}
 
 interface EncryptionContextType {
   isSetup: boolean;
   isUnlocked: boolean;
   isLoading: boolean;
+  hasCompletedInitialCheck: boolean;
   setupEncryption: (passphrase: string) => Promise<void>;
   unlockEncryption: (passphrase: string) => Promise<void>;
   lockEncryption: () => void;
@@ -36,17 +47,170 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
   const [isSetup, setIsSetup] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasCompletedInitialCheck, setHasCompletedInitialCheck] = useState(false);
   const [encryptionKey, setEncryptionKey] = useState<CryptoKey | null>(null);
   const [userSalt, setUserSalt] = useState<string | null>(null);
+  const [rateLimitState, setRateLimitState] = useState<RateLimitState>(() => {
+    if (user?.sub) {
+      const stored = localStorage.getItem(`lockout_${user.sub}`);
+      if (stored) {
+        try {
+          const data = JSON.parse(stored);
+          // Check if lockout has expired
+          if (data.lockedUntil && Date.now() < data.lockedUntil) {
+            return {
+              attempts: data.attempts || MAX_UNLOCK_ATTEMPTS,
+              lockedUntil: data.lockedUntil,
+            };
+          } else {
+            // Lockout expired or no lockout, but may have attempt count
+            return {
+              attempts: data.attempts || 0,
+              lockedUntil: null,
+            };
+          }
+        } catch (e) {
+          // Invalid data, remove it
+          localStorage.removeItem(`lockout_${user.sub}`);
+        }
+      }
+    }
+    return {
+      attempts: 0,
+      lockedUntil: null,
+    };
+  });
   const hasCheckedSetupRef = useRef(false);
 
   const userSub = user?.sub;
 
-  const getEncryptionStatus = useCallback(async (): Promise<{ hasSalt: boolean; hasAnalyses: boolean; salt: string | null }> => {
+  // Load rate limit state from localStorage when user changes
+  useEffect(() => {
+    if (userSub) {
+      const stored = localStorage.getItem(`lockout_${userSub}`);
+      if (stored) {
+        try {
+          const data = JSON.parse(stored);
+          // Check if lockout has expired
+          if (data.lockedUntil && Date.now() < data.lockedUntil) {
+            setRateLimitState({
+              attempts: data.attempts || MAX_UNLOCK_ATTEMPTS,
+              lockedUntil: data.lockedUntil,
+            });
+          } else {
+            // Lockout expired or no lockout, but may have attempt count
+            setRateLimitState({
+              attempts: data.attempts || 0,
+              lockedUntil: null,
+            });
+            // If lockout expired, update localStorage
+            if (data.lockedUntil && Date.now() >= data.lockedUntil) {
+              localStorage.setItem(
+                `lockout_${userSub}`,
+                JSON.stringify({
+                  attempts: data.attempts || 0,
+                  lockedUntil: null,
+                  timestamp: Date.now(),
+                })
+              );
+            }
+          }
+        } catch (e) {
+          // Invalid data, remove it
+          localStorage.removeItem(`lockout_${userSub}`);
+          setRateLimitState({ attempts: 0, lockedUntil: null });
+        }
+      } else {
+        setRateLimitState({ attempts: 0, lockedUntil: null });
+      }
+    } else {
+      setRateLimitState({ attempts: 0, lockedUntil: null });
+    }
+  }, [userSub]);
+
+  // Listen for localStorage changes from other sources (like the hook)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key?.startsWith('lockout_') && e.key.includes(userSub || '')) {
+        // Reload rate limit state
+        const stored = localStorage.getItem(e.key);
+        if (stored) {
+          try {
+            const data = JSON.parse(stored);
+            if (data.lockedUntil && Date.now() < data.lockedUntil) {
+              setRateLimitState({
+                attempts: data.attempts || MAX_UNLOCK_ATTEMPTS,
+                lockedUntil: data.lockedUntil,
+              });
+            } else {
+              setRateLimitState({
+                attempts: data.attempts || 0,
+                lockedUntil: null,
+              });
+            }
+          } catch (e) {
+            setRateLimitState({ attempts: 0, lockedUntil: null });
+          }
+        } else {
+          setRateLimitState({ attempts: 0, lockedUntil: null });
+        }
+      }
+    };
+
+    const handleRateLimitUpdate = (e: CustomEvent) => {
+      if (e.detail.userSub === userSub) {
+        // Reload rate limit state
+        const stored = localStorage.getItem(`lockout_${userSub}`);
+        if (stored) {
+          try {
+            const data = JSON.parse(stored);
+            if (data.lockedUntil && Date.now() < data.lockedUntil) {
+              setRateLimitState({
+                attempts: data.attempts || MAX_UNLOCK_ATTEMPTS,
+                lockedUntil: data.lockedUntil,
+              });
+            } else {
+              setRateLimitState({
+                attempts: data.attempts || 0,
+                lockedUntil: null,
+              });
+            }
+          } catch (e) {
+            setRateLimitState({ attempts: 0, lockedUntil: null });
+          }
+        } else {
+          setRateLimitState({ attempts: 0, lockedUntil: null });
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('rateLimitUpdate', handleRateLimitUpdate as EventListener);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('rateLimitUpdate', handleRateLimitUpdate as EventListener);
+    };
+  }, [userSub]);  const getEncryptionStatus = useCallback(async (): Promise<{ hasSalt: boolean; hasAnalyses: boolean; salt: string | null }> => {
     if (!userSub) {
       return { hasSalt: false, hasAnalyses: false, salt: null };
     }
 
+    // Check localStorage cache first (valid for 5 minutes)
+    const cacheKey = `encryption_status_${userSub}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const { data, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < 5 * 60 * 1000) { // 5 minutes
+          return data;
+        }
+      } catch (e) {
+        // Invalid cache, remove it
+        localStorage.removeItem(cacheKey);
+      }
+    }
+
+    // Cache miss or expired, call API
     try {
       const token = await getAccessTokenSilently();
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/encryption/status`, {
@@ -58,6 +222,13 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
 
       if (response.ok) {
         const data = await response.json();
+        
+        // Cache the result
+        localStorage.setItem(cacheKey, JSON.stringify({
+          data,
+          timestamp: Date.now(),
+        }));
+        
         if (data.salt) {
           setUserSalt(data.salt);
         }
@@ -68,7 +239,15 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
         };
       }
     } catch (error) {
-      console.error('Failed to fetch encryption status:', error);
+      // On API failure, try to use cached data if available
+      if (cached) {
+        try {
+          const { data } = JSON.parse(cached);
+          return data;
+        } catch (e) {
+          // Invalid cache
+        }
+      }
     }
 
     return { hasSalt: false, hasAnalyses: false, salt: null };
@@ -128,7 +307,6 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
               }
             } else if (status.hasAnalyses) {
               // User has analyses but no salt - error state (shouldn't happen)
-              console.error('User has analyses but no salt found - data inconsistency');
               setIsSetup(false);
               setIsUnlocked(false);
             } else {
@@ -138,19 +316,18 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
             }
           } catch (error) {
             // Failed to check backend - assume not setup
-            console.error('Failed to check encryption status:', error);
             setIsSetup(false);
             setIsUnlocked(false);
           }
         }
       } catch (error) {
-        console.error('Failed to check encryption setup:', error);
         // Don't reset setup if we're already unlocked
         if (!isUnlocked) {
           setIsSetup(false);
         }
       } finally {
         setIsLoading(false);
+        setHasCompletedInitialCheck(true);
       }
     };
 
@@ -173,7 +350,7 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
       const status = await getEncryptionStatus();
       return status.salt;
     } catch (error) {
-      console.error('Failed to fetch salt:', error);
+      // Failed to fetch salt
     }
 
     return null;
@@ -199,7 +376,6 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
 
       setUserSalt(salt);
     } catch (error) {
-      console.error('Failed to save salt:', error);
       throw error;
     }
   }, [userSub]);
@@ -237,7 +413,6 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
       setIsUnlocked(true);
       hasCheckedSetupRef.current = true;
     } catch (error) {
-      console.error('Failed to setup encryption:', error);
       throw error;
     } finally {
       setIsLoading(false);
@@ -246,6 +421,21 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
 
   const unlockEncryption = useCallback(async (passphrase: string): Promise<void> => {
     if (!userSub) throw new Error('User not authenticated');
+
+    // Check if locked out
+    if (rateLimitState.lockedUntil && Date.now() < rateLimitState.lockedUntil) {
+      const remainingSeconds = Math.ceil(
+        (rateLimitState.lockedUntil - Date.now()) / 1000
+      );
+      throw new Error(
+        `Too many failed attempts. Try again in ${remainingSeconds} seconds.`
+      );
+    }
+
+    // Reset lockout if it expired
+    if (rateLimitState.lockedUntil && Date.now() >= rateLimitState.lockedUntil) {
+      setRateLimitState({ attempts: 0, lockedUntil: null });
+    }
 
     setIsLoading(true);
     try {
@@ -261,12 +451,26 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
       // Convert salt from base64 to Uint8Array
       const salt = Uint8Array.from(atob(saltBase64), (c) => c.charCodeAt(0));
 
-      // Derive encryption key from passphrase + salt (same process as setup)
+      // Derive encryption key from passphrase + salt with 600k iterations (NIST 2024 standard)
       const key = await deriveKey(passphrase, salt);
 
       // Verify key by trying to decrypt stored key material OR existing encrypted data
       const encryptedKeyMaterial = await getEncryptedKey(userSub);
-      if (!encryptedKeyMaterial) {
+
+      if (encryptedKeyMaterial) {
+        // Verify key works by decrypting stored material
+        try {
+          const decrypted = await decryptKeyMaterial(encryptedKeyMaterial, key);
+          
+          const data = JSON.parse(decrypted);
+          
+          if (!data.userSub || data.userSub !== userSub) {
+            throw new Error('Invalid key material: userSub mismatch');
+          }
+        } catch (error) {
+          throw new Error('Invalid passphrase. Please try again.');
+        }
+      } else {
         // No key material stored locally - this is first unlock on new device
         // CRITICAL: We MUST verify passphrase by decrypting existing encrypted data from backend
         // This prevents accepting wrong passphrases on new devices
@@ -307,15 +511,12 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
                 throw new Error('Invalid passphrase. Please try again.');
               }
             } else {
-              // No existing records - can't verify, but this shouldn't happen if encryption is setup
-              // If user has no records yet, we can't verify, so allow it (edge case)
-              // Store encrypted key material for future verification
-              const verificationData = JSON.stringify({
-                timestamp: Date.now(),
-                userSub: userSub,
-              });
-              const encrypted = await encryptKeyMaterial(verificationData, key);
-              await storeEncryptedKey(userSub, encrypted);
+              // No existing records - can't verify passphrase on new device
+              // This prevents accepting wrong passphrases
+              throw new Error(
+                'Cannot verify passphrase: no encrypted data found. ' +
+                'Please create an analysis first, or wait for backup code support.'
+              );
             }
           } else {
             throw new Error('Failed to fetch encrypted data for verification');
@@ -326,44 +527,142 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
           }
           throw new Error('Failed to verify passphrase. Please try again.');
         }
-      } else {
-        // Verify key works by decrypting stored material
-        try {
-          const decrypted = await decryptKeyMaterial(encryptedKeyMaterial, key);
-          // Verify the decrypted data contains expected structure
-          const data = JSON.parse(decrypted);
-          if (!data.userSub || data.userSub !== userSub) {
-            throw new Error('Invalid key material');
-          }
-        } catch (error) {
-          throw new Error('Invalid passphrase. Please try again.');
-        }
       }
 
-      // Store key in memory (will be cleared on logout, but encrypted material stays in IndexedDB)
+      // SUCCESS: Store key in memory (will be cleared on logout, but encrypted material stays in IndexedDB)
       setEncryptionKey(key);
       setUserSalt(saltBase64);
       setIsSetup(true);
       setIsUnlocked(true);
       hasCheckedSetupRef.current = true;
+      // Reset rate limit on success
+      setRateLimitState({ attempts: 0, lockedUntil: null });
+      // Clear localStorage
+      if (userSub) {
+        localStorage.removeItem(`lockout_${userSub}`);
+        // Notify other components
+        window.dispatchEvent(new CustomEvent('rateLimitUpdate', { detail: { userSub } }));
+      }
+      // Sync reset to backend
+      try {
+        const token = await getAccessTokenSilently();
+        await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/encryption/save-attempts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ attempts: 0 }),
+        });
+      } catch (e) {
+        // Silently fail
+      }
     } catch (error) {
-      console.error('Failed to unlock encryption:', error);
-      throw error;
+      // Increment failed attempts for rate limiting
+      const newAttempts = rateLimitState.attempts + 1;
+      
+      if (newAttempts >= MAX_UNLOCK_ATTEMPTS) {
+        // Lock out user
+        const lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
+        setRateLimitState({ attempts: newAttempts, lockedUntil });
+        
+        // Persist to localStorage
+        localStorage.setItem(
+          `lockout_${userSub}`,
+          JSON.stringify({
+            lockedUntil,
+            timestamp: Date.now(),
+          })
+        );
+        
+        // Notify other components
+        window.dispatchEvent(new CustomEvent('rateLimitUpdate', { detail: { userSub } }));
+        
+        // Sync lockout to backend
+        try {
+          const token = await getAccessTokenSilently();
+          await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/encryption/lock-user`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              lockedUntil,
+              attempts: newAttempts,
+            }),
+          });
+        } catch (e) {
+          // Backend lockout sync failed, using local only
+        }
+        
+        throw new Error(
+          `Too many failed attempts (${newAttempts}/${MAX_UNLOCK_ATTEMPTS}). ` +
+          `Locked for 5 minutes.`
+        );
+      } else {
+        // Update attempt count
+        setRateLimitState({
+          attempts: newAttempts,
+          lockedUntil: null,
+        });
+        
+        // Persist attempt count to localStorage
+        localStorage.setItem(
+          `lockout_${userSub}`,
+          JSON.stringify({
+            attempts: newAttempts,
+            lockedUntil: null,
+            timestamp: Date.now(),
+          })
+        );
+        
+        // Notify other components
+        window.dispatchEvent(new CustomEvent('rateLimitUpdate', { detail: { userSub } }));
+        
+        // Sync attempts to backend
+        try {
+          const token = await getAccessTokenSilently();
+          await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/encryption/save-attempts`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ attempts: newAttempts }),
+          });
+        } catch (e) {
+          // Silently fail - localStorage is the primary source
+        }
+        
+        const remaining = MAX_UNLOCK_ATTEMPTS - newAttempts;
+        throw new Error(
+          `${(error as Error).message} (${remaining} attempts remaining)`
+        );
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [userSub, userSalt, getSalt, getAccessTokenSilently]);
+  }, [userSub, userSalt, getSalt, getAccessTokenSilently, rateLimitState]);
 
   const lockEncryption = useCallback(() => {
-    // Only clear in-memory key, NOT the encrypted key material in IndexedDB
-    // This allows us to detect encryption is setup on next login
+    // Clear in-memory key
     setEncryptionKey(null);
     setIsUnlocked(false);
     // Reset the check flag so we can check again on next login
     hasCheckedSetupRef.current = false;
+    
+    // Clear IndexedDB for this user on logout
+    // MongoDB salt is the authoritative source for detecting encryption setup
+    if (userSub) {
+      clearEncryptedKey(userSub).catch(() => {
+        // Failed to clear IndexedDB on logout
+      });
+    }
+    
     // Don't clear userSalt - it helps with cross-device detection
     // setUserSalt(null);
-  }, []);
+  }, [userSub]);
 
   const encryptData = useCallback(async (
     data: Partial<Analysis>
@@ -425,6 +724,7 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
         isSetup,
         isUnlocked,
         isLoading,
+        hasCompletedInitialCheck,
         setupEncryption,
         unlockEncryption,
         lockEncryption,

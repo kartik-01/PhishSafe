@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription } from './ui/drawer';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
@@ -12,9 +12,29 @@ import type { Analysis, EncryptedAnalysis } from '@/types/api';
 interface HistoryDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  triggerRef?: React.RefObject<HTMLElement>;
 }
 
-export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
+export function HistoryDrawer({ open, onOpenChange, triggerRef }: HistoryDrawerProps) {
+    // Focus management for accessibility
+    const drawerContentRef = useRef<HTMLDivElement>(null);
+
+    useLayoutEffect(() => {
+      if (open) {
+        const el = drawerContentRef.current;
+        if (el) {
+          const focusable = el.querySelector<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          );
+          // blur any active element first to avoid hiding focus from AT
+          (document.activeElement as HTMLElement | null)?.blur?.();
+          focusable?.focus();
+        }
+      } else if (triggerRef?.current) {
+        // Restore focus to the trigger button synchronously
+        triggerRef.current?.focus();
+      }
+    }, [open, triggerRef]);
   const { getAccessTokenSilently } = useAuth();
   const { decryptData, isUnlocked } = useEncryption();
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
@@ -73,7 +93,7 @@ export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="bg-slate-900 border-emerald-500/30 text-emerald-400 max-h-[80vh]">
+      <DrawerContent ref={drawerContentRef} className="bg-slate-900 border-emerald-500/30 text-emerald-400 max-h-[80vh]">
         <DrawerHeader>
           <DrawerTitle className="text-2xl text-slate-50 font-mono">Analysis History</DrawerTitle>
           <DrawerDescription className="text-slate-300 font-mono">
