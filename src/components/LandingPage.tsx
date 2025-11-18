@@ -82,7 +82,7 @@ export function LandingPage({ onStartCheck, onAuth }: LandingPageProps) {
           </div>
           
           <p className="text-xl text-slate-200 font-mono">
-            <DecryptedText speed={50} text="Advanced Phishing Threat Detection System" />
+            <DecryptedText speed={50} text="Zero-Knowledge Phishing Detection System" />
           </p>
         </motion.div>
 
@@ -130,7 +130,7 @@ export function LandingPage({ onStartCheck, onAuth }: LandingPageProps) {
             <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
               <iframe
                 className="absolute top-0 left-0 w-full h-full rounded"
-                src="https://www.youtube.com/embed/n9G4Sod9pTE"
+                src="https://www.youtube.com/embed/tQ6goaZisr0"
                 title="How SecureBeacon Works"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
