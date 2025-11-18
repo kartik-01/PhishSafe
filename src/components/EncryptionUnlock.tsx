@@ -26,8 +26,6 @@ function EncryptionUnlock({ open }: EncryptionUnlockProps) {
     getAccessTokenSilently
   );
 
-  const userSub = user?.sub;
-
   const [passphrase, setPassphrase] = useState('');
   const [showPassphrase, setShowPassphrase] = useState(false);
   const [error, setError] = useState('');

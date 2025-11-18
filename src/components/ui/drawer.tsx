@@ -4,12 +4,9 @@ import { Drawer as DrawerPrimitive } from "vaul";
 import { cn } from "./utils";
 
 
-const Drawer = React.forwardRef<
-  React.ElementRef<typeof DrawerPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Root>
->(({ ...props }, ref) => (
-  <DrawerPrimitive.Root ref={ref} data-slot="drawer" {...props} />
-));
+const Drawer = ({ ...props }: React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Root>) => (
+  <DrawerPrimitive.Root data-slot="drawer" {...props} />
+);
 Drawer.displayName = 'Drawer';
 
 const DrawerTrigger = React.forwardRef<
@@ -20,12 +17,9 @@ const DrawerTrigger = React.forwardRef<
 ));
 DrawerTrigger.displayName = 'DrawerTrigger';
 
-const DrawerPortal = React.forwardRef<
-  React.ElementRef<typeof DrawerPrimitive.Portal>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Portal>
->(({ ...props }, ref) => (
-  <DrawerPrimitive.Portal ref={ref} data-slot="drawer-portal" {...props} />
-));
+const DrawerPortal = ({ ...props }: React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Portal>) => (
+  <DrawerPrimitive.Portal data-slot="drawer-portal" {...props} />
+);
 DrawerPortal.displayName = 'DrawerPortal';
 
 const DrawerClose = React.forwardRef<

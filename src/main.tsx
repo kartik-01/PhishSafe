@@ -21,7 +21,7 @@ createRoot(document.getElementById('root')!).render(
       }}
       useRefreshTokens={true}
       cacheLocation="localstorage"
-      onRedirectCallback={(appState) => {
+      onRedirectCallback={() => {
         // Auth0 SDK processes the callback automatically
         // Clean up URL after Auth0 has processed it
         setTimeout(() => {

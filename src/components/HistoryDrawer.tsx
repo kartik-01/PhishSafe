@@ -112,10 +112,6 @@ export function HistoryDrawer({ open, onOpenChange, triggerRef }: HistoryDrawerP
     };
   };
 
-  const truncateText = (text: string, maxLength: number = 100) => {
-    if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength) + '...';
-  };
 
   const parseEmailHeaders = (content: string) => {
     const headers: Record<string, string> = {};
