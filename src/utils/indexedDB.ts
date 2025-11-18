@@ -81,20 +81,42 @@ export async function getEncryptedKey(
 
 /**
  * Clear encrypted key material for a user (on logout)
+ * Note: This preserves the salt in IndexedDB for cross-device sync
  */
 export async function clearEncryptedKey(userSub: string): Promise<void> {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(userSub);
+    const request = store.get(userSub);
 
     request.onsuccess = () => {
-      resolve();
+      const existing = request.result;
+      if (existing) {
+        // Preserve salt but clear encrypted key material
+        const updateRequest = store.put({
+          userSub,
+          encryptedKeyMaterial: '',
+          salt: existing.salt || '',
+          createdAt: existing.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+
+        updateRequest.onsuccess = () => {
+          resolve();
+        };
+
+        updateRequest.onerror = () => {
+          reject(new Error('Failed to clear encrypted key'));
+        };
+      } else {
+        // No existing record, nothing to clear
+        resolve();
+      }
     };
 
     request.onerror = () => {
-      reject(new Error('Failed to clear encrypted key'));
+      reject(new Error('Failed to retrieve user data for clearing'));
     };
   });
 }
@@ -105,5 +127,64 @@ export async function clearEncryptedKey(userSub: string): Promise<void> {
 export async function hasEncryptedKey(userSub: string): Promise<boolean> {
   const key = await getEncryptedKey(userSub);
   return key !== null;
+}
+
+/**
+ * Store salt for a user
+ */
+export async function storeSalt(
+  userSub: string,
+  salt: string
+): Promise<void> {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(userSub);
+
+    request.onsuccess = () => {
+      const existing = request.result;
+      const updateRequest = store.put({
+        userSub,
+        encryptedKeyMaterial: existing?.encryptedKeyMaterial || '',
+        salt,
+        createdAt: existing?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      updateRequest.onsuccess = () => {
+        resolve();
+      };
+
+      updateRequest.onerror = () => {
+        reject(new Error('Failed to store salt'));
+      };
+    };
+
+    request.onerror = () => {
+      reject(new Error('Failed to retrieve user data for salt storage'));
+    };
+  });
+}
+
+/**
+ * Retrieve salt for a user
+ */
+export async function getSalt(userSub: string): Promise<string | null> {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(userSub);
+
+    request.onsuccess = () => {
+      const result = request.result;
+      resolve(result?.salt || null);
+    };
+
+    request.onerror = () => {
+      reject(new Error('Failed to retrieve salt'));
+    };
+  });
 }
 

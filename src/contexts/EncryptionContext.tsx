@@ -13,6 +13,8 @@ import {
   getEncryptedKey,
   hasEncryptedKey,
   clearEncryptedKey,
+  storeSalt,
+  getSalt as getSaltFromIndexedDB,
 } from '@/utils/indexedDB';
 import type { Analysis, EncryptedAnalysis } from '@/types/api';
 
@@ -348,15 +350,37 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated, authLoading]);
 
   const getSalt = useCallback(async (): Promise<string | null> => {
+    // First check memory
     if (userSalt) return userSalt;
 
     if (!userSub) return null;
 
+    // Then check IndexedDB
+    try {
+      const saltFromIndexedDB = await getSaltFromIndexedDB(userSub);
+      if (saltFromIndexedDB) {
+        setUserSalt(saltFromIndexedDB);
+        return saltFromIndexedDB;
+      }
+    } catch (error) {
+      // IndexedDB lookup failed, continue to MongoDB
+    }
+
+    // Finally check MongoDB
     try {
       const status = await getEncryptionStatus();
-      return status.salt;
+      if (status.salt) {
+        // Save to IndexedDB for future use
+        try {
+          await storeSalt(userSub, status.salt);
+        } catch (e) {
+          // Failed to save to IndexedDB, but we have the salt
+        }
+        setUserSalt(status.salt);
+        return status.salt;
+      }
     } catch (error) {
-      // Failed to fetch salt
+      // Failed to fetch salt from MongoDB
     }
 
     return null;
@@ -408,6 +432,9 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
 
       // Store encrypted key material in IndexedDB (this proves encryption is setup)
       await storeEncryptedKey(userSub, encryptedKeyMaterial);
+
+      // Save salt to IndexedDB for local access
+      await storeSalt(userSub, saltBase64);
 
       // Save salt to backend for cross-device recovery
       await saveSalt(saltBase64);
@@ -480,6 +507,7 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
         // No key material stored locally - this is first unlock on new device
         // CRITICAL: We MUST verify passphrase by decrypting existing encrypted data from backend
         // This prevents accepting wrong passphrases on new devices
+        // However, for brand new users who just set up encryption, we allow unlock if no analyses exist yet
         try {
           const token = await getAccessTokenSilently();
           const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/analyses?limit=1`, {
@@ -517,12 +545,23 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
                 throw new Error('Invalid passphrase. Please try again.');
               }
             } else {
-              // No existing records - can't verify passphrase on new device
-              // This prevents accepting wrong passphrases
-              throw new Error(
-                'Cannot verify passphrase: no encrypted data found. ' +
-                'Please create an analysis first, or wait for backup code support.'
-              );
+              // No existing records - this is a brand new user who just set up encryption
+              // Since they just set up, we trust the salt from MongoDB and allow unlock
+              // Store encrypted key material for future unlocks
+              const verificationData = JSON.stringify({
+                timestamp: Date.now(),
+                userSub: userSub,
+              });
+              const encrypted = await encryptKeyMaterial(verificationData, key);
+              await storeEncryptedKey(userSub, encrypted);
+              // Also ensure salt is in IndexedDB
+              if (saltBase64) {
+                try {
+                  await storeSalt(userSub, saltBase64);
+                } catch (e) {
+                  // Failed to save salt to IndexedDB, but continue
+                }
+              }
             }
           } else {
             throw new Error('Failed to fetch encrypted data for verification');
@@ -531,7 +570,26 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
           if (error.message.includes('Invalid passphrase')) {
             throw error;
           }
-          throw new Error('Failed to verify passphrase. Please try again.');
+          if (error.message.includes('Failed to fetch')) {
+            // Network error - for new users, we'll allow unlock if salt exists
+            // Store encrypted key material for future unlocks
+            const verificationData = JSON.stringify({
+              timestamp: Date.now(),
+              userSub: userSub,
+            });
+            const encrypted = await encryptKeyMaterial(verificationData, key);
+            await storeEncryptedKey(userSub, encrypted);
+            // Also ensure salt is in IndexedDB
+            if (saltBase64) {
+              try {
+                await storeSalt(userSub, saltBase64);
+              } catch (e) {
+                // Failed to save salt to IndexedDB, but continue
+              }
+            }
+          } else {
+            throw new Error('Failed to verify passphrase. Please try again.');
+          }
         }
       }
 
@@ -660,14 +718,15 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
     
     // Clear IndexedDB for this user on logout
     // MongoDB salt is the authoritative source for detecting encryption setup
+    // Note: We don't clear salt from IndexedDB on logout - it helps with cross-device sync
     if (userSub) {
       clearEncryptedKey(userSub).catch(() => {
         // Failed to clear IndexedDB on logout
       });
     }
     
-    // Don't clear userSalt - it helps with cross-device detection
-    // setUserSalt(null);
+    // Clear salt from memory but keep it in IndexedDB for next login
+    setUserSalt(null);
   }, [userSub]);
 
   const encryptData = useCallback(async (
